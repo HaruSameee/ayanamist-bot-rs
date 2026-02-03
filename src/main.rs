@@ -57,7 +57,7 @@ async fn main() -> Result<(), Error> {
         serenity::GatewayIntents::non_privileged() | serenity::GatewayIntents::MESSAGE_CONTENT;
 
     let commands = {
-        let mut commands = vec![ping(), proxy::proxy_command()];
+        let mut commands = vec![ping(), proxy::proxy_command(), proxy::proxycheck_command()];
 
         // TODO: MANAGE_GUILDとBAN_MEMBERSなど複数のパーミッションを解釈できないがこれでいいのか？
         let captcha_perm = parse_permissions(&config.discord.captcha_default_permission);

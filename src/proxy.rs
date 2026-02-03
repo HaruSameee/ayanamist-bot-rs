@@ -1,5 +1,5 @@
 use crate::{Context, Data, Error};
-use ::serenity::all::{CreateActionRow, CreateButton};
+use ::serenity::all::{CreateActionRow, CreateButton, CreateEmbed};
 use poise::serenity_prelude as serenity;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
@@ -16,14 +16,14 @@ const PROXYSCRAPE_CHECK_PROXY_ENDPOINT: &str = "https://api.proxyscrape.com/v2/o
 #[serde(untagged)]
 enum ProxyCheckResultType {
     Str(String),
-    Bool(()),
+    Bool(bool),
 }
 
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum ProxyCheckResultCountry {
-    Str(()),
-    Bool(()),
+    Str(String),
+    Bool(bool),
 }
 
 #[derive(Deserialize)]
@@ -32,7 +32,6 @@ struct ProxyCheckResult {
     r#type: ProxyCheckResultType,
     ip: String,
     port: String,
-    #[allow(dead_code)]
     country: ProxyCheckResultCountry,
     #[allow(dead_code)]
     ind: String,
@@ -86,11 +85,86 @@ async fn check_proxies(proxies: &[Proxy]) -> Result<ProxyCheckResults, Error> {
         .await?)
 }
 
+/// チェックを行い結果を表示します
+#[poise::command(slash_command, guild_only, rename = "proxycheck")]
+pub async fn proxycheck_command(
+    ctx: Context<'_>,
+    #[description = "チェックしたいプロキシ。ip:portの形式で入力"] proxy: String,
+) -> Result<(), Error> {
+    let Some((ip, port)) = proxy.split_once(":") else {
+        ctx.reply("ip:portの形式で記述してください").await?;
+
+        return Ok(());
+    };
+
+    ctx.defer().await?;
+
+    let results = match check_proxies(&[Proxy {
+        ip: ip.to_string(),
+        port: port.to_string(),
+    }])
+    .await
+    {
+        Ok(result) => result,
+        Err(err) => {
+            tracing::error!("{err:?}");
+            ctx.reply("プロキシのチェックに失敗しました").await?;
+
+            return Ok(());
+        }
+    };
+    let Some(result) = results.0.first() else {
+        ctx.reply("プロキシのチェックに失敗しました").await?;
+
+        return Ok(());
+    };
+
+    let typ = match &result.r#type {
+        ProxyCheckResultType::Str(s) => Some(s.clone()),
+        ProxyCheckResultType::Bool(_) => None,
+    };
+    let country = match &result.country {
+        ProxyCheckResultCountry::Str(s) => Some(s.clone()),
+        ProxyCheckResultCountry::Bool(_) => None,
+    };
+    let embed = CreateEmbed::new()
+        .color(if result.working {
+            serenity::Color::DARK_GREEN
+        } else {
+            serenity::Color::RED
+        })
+        .title("Proxy Checker")
+        .field(
+            "Status",
+            if result.working {
+                "Working"
+            } else {
+                "Not Working"
+            },
+            false,
+        )
+        .field("Type", typ.unwrap_or("Unknown".to_owned()), true)
+        .field(
+            "Country",
+            country.map_or("Unknown".to_owned(), |s| {
+                format!(":flag_{}:", s.to_lowercase())
+            }),
+            true,
+        );
+
+    ctx.send(poise::CreateReply::default().embed(embed)).await?;
+
+    Ok(())
+}
+
 /// ランダムにプロキシを取得して、チェックを行い結果を表示します
 #[poise::command(slash_command, guild_only, rename = "proxy")]
 pub async fn proxy_command(
     ctx: Context<'_>,
-    #[description = "取得する個数（1以上50以下）"] amount: Option<usize>,
+    #[description = "取得する個数（1以上50以下）"]
+    #[min = 1]
+    #[max = 50]
+    amount: Option<usize>,
 ) -> Result<(), Error> {
     let amount = amount.unwrap_or(1);
 
