@@ -20,3 +20,4 @@ cargo run
     - ~~proxyコマンドの実装~~
     - ~~proxycheckコマンドの実装~~
 - ayanamist.jpとの連携(内容未定)
+- joinの実装
