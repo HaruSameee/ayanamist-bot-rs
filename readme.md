@@ -13,7 +13,6 @@ cargo run
 ```
 
 ## TODO
-- /captcha の default_member_permissions を config から注入する実装に整理
 - ~~poise Command と CreateCommand の二重定義解消~~
 - pokemonの実装
 - ~~proxyの実装~~
@@ -21,3 +20,4 @@ cargo run
     - ~~proxycheckコマンドの実装~~
 - ayanamist.jpとの連携(内容未定)
 - joinの実装
+- verifyに表示する画像デザインの改良
