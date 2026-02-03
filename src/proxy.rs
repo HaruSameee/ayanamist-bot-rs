@@ -1,3 +1,4 @@
+use crate::interaction::respond_component;
 use crate::{Context, Data, Error};
 use ::serenity::all::{CreateActionRow, CreateButton, CreateEmbed};
 use poise::serenity_prelude as serenity;
@@ -267,8 +268,9 @@ pub async fn handle_component(
                 .first()
                 .and_then(|e| e.description.as_ref())
             else {
-                i.create_response(
+                respond_component(
                     ctx,
+                    i,
                     serenity::CreateInteractionResponse::Message(
                         serenity::CreateInteractionResponseMessage::new()
                             .content("このダウンロードに関連付けられたプロキシが取得できません")
@@ -299,8 +301,9 @@ pub async fn handle_component(
                 .collect();
 
             if proxies.is_empty() {
-                i.create_response(
+                respond_component(
                     ctx,
+                    i,
                     serenity::CreateInteractionResponse::Message(
                         serenity::CreateInteractionResponseMessage::new()
                             .content("このダウンロードに関連付けられたプロキシが取得できません")
@@ -322,8 +325,9 @@ pub async fn handle_component(
                 .collect();
             let row = CreateActionRow::Buttons(buttons);
 
-            i.create_response(
+            respond_component(
                 ctx,
+                i,
                 serenity::CreateInteractionResponse::Message(
                     serenity::CreateInteractionResponseMessage::new()
                         .content("Choose Download Type")
@@ -339,8 +343,9 @@ pub async fn handle_component(
             // TODO: 正規表現は毎回作るべきではない
             let re = Regex::new(r"\s*\|\s*").unwrap();
             let Some(typ) = id.strip_prefix("proxy:download:") else {
-                i.create_response(
+                respond_component(
                     ctx,
+                    i,
                     serenity::CreateInteractionResponse::Message(
                         serenity::CreateInteractionResponseMessage::new()
                             .content("不明なプロキシの種類です")
@@ -357,8 +362,9 @@ pub async fn handle_component(
                 .as_ref()
                 .and_then(|m| m.message_id.as_ref())
             else {
-                i.create_response(
+                respond_component(
                     ctx,
+                    i,
                     serenity::CreateInteractionResponse::Message(
                         serenity::CreateInteractionResponseMessage::new()
                             .content("このダウンロードに関連付けられたプロキシが取得できません")
@@ -393,8 +399,9 @@ pub async fn handle_component(
                     })
                 })
             }) else {
-                i.create_response(
+                respond_component(
                     ctx,
+                    i,
                     serenity::CreateInteractionResponse::Message(
                         serenity::CreateInteractionResponseMessage::new()
                             .content("このダウンロードに関連付けられたプロキシが取得できません")
@@ -422,8 +429,9 @@ pub async fn handle_component(
                 "proxies.txt",
             );
 
-            i.create_response(
+            respond_component(
                 ctx,
+                i,
                 serenity::CreateInteractionResponse::Message(
                     serenity::CreateInteractionResponseMessage::new()
                         .content("Complete")

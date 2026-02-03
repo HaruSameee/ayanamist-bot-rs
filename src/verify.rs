@@ -6,6 +6,7 @@ use poise::serenity_prelude as serenity;
 use rand::seq::SliceRandom;
 use rand::Rng;
 
+use crate::interaction::respond_component;
 use crate::{Context, Data, Error};
 
 const START_ID: &str = "captcha:start";
@@ -106,16 +107,16 @@ async fn on_start(
 
     if let Some(existing) = CHALLENGES.get(&user_id) {
         if Instant::now() <= existing.expires_at {
-            interaction
-                .create_response(
-                    ctx,
-                    serenity::CreateInteractionResponse::Message(
-                        serenity::CreateInteractionResponseMessage::new()
-                            .content("すでに挑戦中です。")
-                            .ephemeral(true),
-                    ),
-                )
-                .await?;
+            respond_component(
+                ctx,
+                interaction,
+                serenity::CreateInteractionResponse::Message(
+                    serenity::CreateInteractionResponseMessage::new()
+                        .content("すでに挑戦中です。")
+                        .ephemeral(true),
+                ),
+            )
+            .await?;
             return Ok(());
         }
         CHALLENGES.remove(&user_id);
@@ -161,17 +162,17 @@ async fn on_start(
         })
         .collect();
 
-    interaction
-        .create_response(
-            ctx,
-            serenity::CreateInteractionResponse::Message(
-                serenity::CreateInteractionResponseMessage::new()
-                    .embed(embed)
-                    .components(vec![serenity::CreateActionRow::Buttons(buttons)])
-                    .ephemeral(true),
-            ),
-        )
-        .await?;
+    respond_component(
+        ctx,
+        interaction,
+        serenity::CreateInteractionResponse::Message(
+            serenity::CreateInteractionResponseMessage::new()
+                .embed(embed)
+                .components(vec![serenity::CreateActionRow::Buttons(buttons)])
+                .ephemeral(true),
+        ),
+    )
+    .await?;
 
     Ok(())
 }
@@ -201,16 +202,16 @@ async fn on_answer(
             .description("もう一度やり直してください。")
             .footer(serenity::CreateEmbedFooter::new("Ayanamist System").icon_url(FOOTER_ICON_URL));
 
-        interaction
-            .create_response(
-                ctx,
-                serenity::CreateInteractionResponse::Message(
-                    serenity::CreateInteractionResponseMessage::new()
-                        .embed(embed)
-                        .ephemeral(true),
-                ),
-            )
-            .await?;
+        respond_component(
+            ctx,
+            interaction,
+            serenity::CreateInteractionResponse::Message(
+                serenity::CreateInteractionResponseMessage::new()
+                    .embed(embed)
+                    .ephemeral(true),
+            ),
+        )
+        .await?;
         return Ok(());
     }
 
@@ -223,16 +224,16 @@ async fn on_answer(
             .description("もう一度やり直してください。")
             .footer(serenity::CreateEmbedFooter::new("Ayanamist System").icon_url(FOOTER_ICON_URL));
 
-        interaction
-            .create_response(
-                ctx,
-                serenity::CreateInteractionResponse::Message(
-                    serenity::CreateInteractionResponseMessage::new()
-                        .embed(embed)
-                        .ephemeral(true),
-                ),
-            )
-            .await?;
+        respond_component(
+            ctx,
+            interaction,
+            serenity::CreateInteractionResponse::Message(
+                serenity::CreateInteractionResponseMessage::new()
+                    .embed(embed)
+                    .ephemeral(true),
+            ),
+        )
+        .await?;
         return Ok(());
     }
 
@@ -250,16 +251,16 @@ async fn on_answer(
         .description("ロールを付与しました。")
         .footer(serenity::CreateEmbedFooter::new("Ayanamist System").icon_url(FOOTER_ICON_URL));
 
-    interaction
-        .create_response(
-            ctx,
-            serenity::CreateInteractionResponse::Message(
-                serenity::CreateInteractionResponseMessage::new()
-                    .embed(embed)
-                    .ephemeral(true),
-            ),
-        )
-        .await?;
+    respond_component(
+        ctx,
+        interaction,
+        serenity::CreateInteractionResponse::Message(
+            serenity::CreateInteractionResponseMessage::new()
+                .embed(embed)
+                .ephemeral(true),
+        ),
+    )
+    .await?;
 
     Ok(())
 }

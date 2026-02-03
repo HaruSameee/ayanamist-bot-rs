@@ -1,4 +1,5 @@
 mod config;
+mod interaction;
 mod proxy;
 mod verify;
 
