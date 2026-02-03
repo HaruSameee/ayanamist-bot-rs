@@ -232,7 +232,7 @@ async fn on_answer(
         return Ok(());
     };
 
-    let mut member = guild_id.member(ctx, user_id).await?;
+    let member = guild_id.member(ctx, user_id).await?;
     member.add_role(ctx, verify_role_id(data)).await?;
     CHALLENGES.remove(&user_id);
 

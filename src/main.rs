@@ -87,10 +87,10 @@ async fn main() -> Result<(), Error> {
 
         event_handler: |ctx, event, _framework: poise::FrameworkContext<'_, Data, _>, data| {
             Box::pin(async move {
-                if let serenity::FullEvent::InteractionCreate { interaction } = event {
-                    if let serenity::Interaction::Component(comp) = interaction {
-                        let _ = verify::captcha::handle_component(ctx, data, &comp).await;
-                    }
+                if let serenity::FullEvent::InteractionCreate { interaction } = event
+                    && let serenity::Interaction::Component(comp) = interaction
+                {
+                    let _ = verify::captcha::handle_component(ctx, data, comp).await;
                 }
                 Ok(())
             })
