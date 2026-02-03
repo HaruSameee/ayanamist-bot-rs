@@ -99,18 +99,22 @@ async fn on_start(
 ) -> Result<(), Error> {
     let user_id = interaction.user.id;
 
-    if CHALLENGES.contains_key(&user_id) {
-        interaction
-            .create_response(
-                ctx,
-                serenity::CreateInteractionResponse::Message(
-                    serenity::CreateInteractionResponseMessage::new()
-                        .content("すでに挑戦中です。")
-                        .ephemeral(true),
-                ),
-            )
-            .await?;
-        return Ok(());
+    if let Some(existing) = CHALLENGES.get(&user_id) {
+        if Instant::now() <= existing.expires_at {
+            interaction
+                .create_response(
+                    ctx,
+                    serenity::CreateInteractionResponse::Message(
+                        serenity::CreateInteractionResponseMessage::new()
+                            .content("すでに挑戦中です。")
+                            .ephemeral(true),
+                    ),
+                )
+                .await?;
+            return Ok(());
+        }
+        CHALLENGES.remove(&user_id);
+
     }
 
     let (a, b, correct, mut choices) = {
