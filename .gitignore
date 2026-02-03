@@ -1,0 +1,25 @@
+/target
+# ===== Rust =====
+/target/
+**/*.rs.bk
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+
+# ===== Editor =====
+.vscode/
+.idea/
+
+# ===== Config / Secrets =====
+config.toml
+.env
+
+# ===== Logs =====
+*.log
+
+# ===== Visual Studio =====
+.vs/
+
+# ===== Local History =====
+.history

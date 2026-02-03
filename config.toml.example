@@ -1,0 +1,12 @@
+[discord]
+token = ""
+guild_id = 1
+captcha_default_permission = "MANAGE_GUILD"
+
+[roles]
+verify = 2
+staff = 3
+
+[pokemon]
+language = "ja-Hrkt"
+
