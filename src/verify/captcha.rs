@@ -3,8 +3,8 @@ use std::time::{Duration, Instant};
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
 use poise::serenity_prelude as serenity;
-use rand::seq::SliceRandom;
 use rand::Rng;
+use rand::seq::SliceRandom;
 
 use crate::{Context, Data, Error};
 
@@ -13,8 +13,10 @@ const ANSWER_PREFIX: &str = "captcha:ans:";
 const TIME_LIMIT: Duration = Duration::from_secs(20);
 
 // image
-const GUIDE_IMAGE_URL: &str = "https://r2.e-z.host/3d3d3396-6de1-4b53-9dfa-80964810a301/l5er5xu6.png";
-const FOOTER_ICON_URL: &str = "https://r2.e-z.host/3d3d3396-6de1-4b53-9dfa-80964810a301/5nt79rj0.png";
+const GUIDE_IMAGE_URL: &str =
+    "https://r2.e-z.host/3d3d3396-6de1-4b53-9dfa-80964810a301/l5er5xu6.png";
+const FOOTER_ICON_URL: &str =
+    "https://r2.e-z.host/3d3d3396-6de1-4b53-9dfa-80964810a301/5nt79rj0.png";
 
 // color
 const COLOR_AQUA: u32 = 0x8FD3FF;
@@ -44,9 +46,9 @@ async fn is_staff(ctx: Context<'_>) -> Result<bool, Error> {
     Ok(member.roles.contains(&staff_role_id(ctx.data())))
 }
 
-#[poise::command(slash_command)]
+/// 認証パネルを設置
+#[poise::command(slash_command, guild_only)]
 pub async fn captcha(ctx: Context<'_>) -> Result<(), Error> {
-    
     if !is_staff(ctx).await? {
         ctx.send(
             poise::CreateReply::default()
@@ -91,7 +93,10 @@ pub async fn handle_component(
     Ok(())
 }
 
-async fn on_start(ctx: &serenity::Context, interaction: &serenity::ComponentInteraction) -> Result<(), Error> {
+async fn on_start(
+    ctx: &serenity::Context,
+    interaction: &serenity::ComponentInteraction,
+) -> Result<(), Error> {
     let user_id = interaction.user.id;
 
     if CHALLENGES.contains_key(&user_id) {
@@ -186,10 +191,7 @@ async fn on_answer(
             .color(COLOR_FAIL)
             .title("⌛ 時間切れ")
             .description("もう一度やり直してください。")
-            .footer(
-                serenity::CreateEmbedFooter::new("Ayanamist System")
-                    .icon_url(FOOTER_ICON_URL),
-            );
+            .footer(serenity::CreateEmbedFooter::new("Ayanamist System").icon_url(FOOTER_ICON_URL));
 
         interaction
             .create_response(
@@ -211,10 +213,7 @@ async fn on_answer(
             .color(COLOR_FAIL)
             .title("❌ 不正解")
             .description("もう一度やり直してください。")
-            .footer(
-                serenity::CreateEmbedFooter::new("Ayanamist System")
-                    .icon_url(FOOTER_ICON_URL),
-            );
+            .footer(serenity::CreateEmbedFooter::new("Ayanamist System").icon_url(FOOTER_ICON_URL));
 
         interaction
             .create_response(
@@ -241,10 +240,7 @@ async fn on_answer(
         .color(COLOR_AQUA)
         .title("✅ 認証成功")
         .description("ロールを付与しました。")
-        .footer(
-            serenity::CreateEmbedFooter::new("Ayanamist System")
-                .icon_url(FOOTER_ICON_URL),
-        );
+        .footer(serenity::CreateEmbedFooter::new("Ayanamist System").icon_url(FOOTER_ICON_URL));
 
     interaction
         .create_response(

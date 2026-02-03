@@ -13,7 +13,8 @@ struct Data {
     config: Config,
 }
 
-#[poise::command(slash_command)]
+/// pong
+#[poise::command(slash_command, guild_only)]
 async fn ping(ctx: Context<'_>) -> Result<(), Error> {
     ctx.say("pong 🦀").await?;
     Ok(())
@@ -36,7 +37,7 @@ fn parse_permissions(s: &str) -> serenity::Permissions {
         "KICK_MEMBERS" => serenity::Permissions::KICK_MEMBERS,
         "BAN_MEMBERS" => serenity::Permissions::BAN_MEMBERS,
         "MODERATE_MEMBERS" | "TIMEOUT_MEMBERS" => serenity::Permissions::MODERATE_MEMBERS,
-        _ => serenity::Permissions::MANAGE_GUILD, 
+        _ => serenity::Permissions::MANAGE_GUILD,
     }
 }
 
@@ -44,30 +45,37 @@ fn parse_permissions(s: &str) -> serenity::Permissions {
 async fn main() -> Result<(), Error> {
     tracing_subscriber::fmt::init();
 
-    let config = Config::load()
-        .map_err(|e| format!("config.toml の読み込みに失敗: {e}"))?;
+    let config = Config::load().map_err(|e| format!("config.toml の読み込みに失敗: {e}"))?;
 
     let token = config.discord.token.clone();
     let guild_id = serenity::GuildId::new(config.discord.guild_id);
 
     let config_for_setup = config.clone();
 
-    let intents = serenity::GatewayIntents::non_privileged()
-        | serenity::GatewayIntents::MESSAGE_CONTENT;
+    let intents =
+        serenity::GatewayIntents::non_privileged() | serenity::GatewayIntents::MESSAGE_CONTENT;
+
+    let commands = {
+        let mut commands = vec![ping()];
+
+        // TODO: MANAGE_GUILDとBAN_MEMBERSなど複数のパーミッションを解釈できないがこれでいいのか？
+        let captcha_perm = parse_permissions(&config.discord.captcha_default_permission);
+        let mut captcha_command = verify::captcha::captcha();
+
+        captcha_command.default_member_permissions = captcha_perm;
+
+        commands.push(captcha_command);
+
+        commands
+    };
 
     let options = poise::FrameworkOptions {
-        commands: vec![
-            ping(),
-            verify::captcha::captcha(),
-        ],
-
+        commands,
         // poiseの二重応答対策
-        on_error: |err| {
+        on_error: |err: poise::FrameworkError<'_, Data, Error>| {
             Box::pin(async move {
                 match err {
-                    poise::FrameworkError::CommandCheckFailed { .. } => {
-                       
-                    }
+                    poise::FrameworkError::CommandCheckFailed { .. } => {}
                     other => {
                         poise::builtins::on_error(other).await;
                     }
@@ -75,7 +83,7 @@ async fn main() -> Result<(), Error> {
             })
         },
 
-        event_handler: |ctx, event, _framework, data| {
+        event_handler: |ctx, event, _framework: poise::FrameworkContext<'_, Data, _>, data| {
             Box::pin(async move {
                 if let serenity::FullEvent::InteractionCreate { interaction } = event {
                     if let serenity::Interaction::Component(comp) = interaction {
@@ -85,7 +93,6 @@ async fn main() -> Result<(), Error> {
                 Ok(())
             })
         },
-
         ..Default::default()
     };
 
@@ -96,30 +103,10 @@ async fn main() -> Result<(), Error> {
             Box::pin(async move {
                 println!("Logged in as {}", ready.user.name);
 
-let captcha_perm = parse_permissions(&config.discord.captcha_default_permission);
+                poise::builtins::register_in_guild(ctx, &framework.options().commands, guild_id)
+                    .await?;
 
-let mut cmds = Vec::new();
-
-// ping
-cmds.push(
-    serenity::CreateCommand::new("ping")
-        .description("pong")
-        .dm_permission(false)
-);
-
-// captcha
-cmds.push(
-    serenity::CreateCommand::new("captcha")
-        .description("認証パネルを設置")
-        .default_member_permissions(captcha_perm)
-        .dm_permission(false)
-);
-
-guild_id.set_commands(ctx.http.clone(), cmds).await?;
-
-
-Ok(Data { config })
-
+                Ok(Data { config })
             })
         })
         .build();
