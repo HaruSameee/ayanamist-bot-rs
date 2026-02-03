@@ -61,7 +61,11 @@ async fn main() -> Result<(), Error> {
 
         // TODO: MANAGE_GUILDとBAN_MEMBERSなど複数のパーミッションを解釈できないがこれでいいのか？
         let captcha_perm = parse_permissions(&config.discord.captcha_default_permission);
+<<<<<<< HEAD
         let mut captcha_command = verify::captcha::captcha();
+=======
+        let mut captcha_command = verify::captcha_command();
+>>>>>>> be6c202 (Interaction fix)
 
         captcha_command.default_member_permissions = captcha_perm;
 
@@ -79,7 +83,20 @@ async fn main() -> Result<(), Error> {
                     poise::FrameworkError::CommandCheckFailed { .. } => {}
                     other => {
                         if let Err(e) = poise::builtins::on_error(other).await {
+<<<<<<< HEAD
                             tracing::error!("Fatal error while sending error message: {}", e);
+=======
+                            let message = e.to_string();
+                            if message.contains("Interaction has already been acknowledged") {
+                                tracing::debug!(
+                                    "Skipped error reply because interaction was already acknowledged: {}",
+                                    message
+                                );
+                            } else {
+                                tracing::error!("Fatal error while sending error message: {}", e);
+                            }
+
+>>>>>>> be6c202 (Interaction fix)
                         }
                     }
                 }
@@ -95,7 +112,11 @@ async fn main() -> Result<(), Error> {
                     let namespace = custom_id.split(':').next().unwrap_or("");
 
                     match namespace {
+<<<<<<< HEAD
                         "captcha" => verify::captcha::handle_component(ctx, data, comp).await?,
+=======
+                        "captcha" => verify::handle_component(ctx, data, comp).await?,
+>>>>>>> be6c202 (Interaction fix)
                         "proxy" => proxy::handle_component(ctx, data, comp).await?,
                         _ => {
                             tracing::warn!("unknown component: {}", custom_id);
