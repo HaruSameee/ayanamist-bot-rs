@@ -31,7 +31,8 @@ fn parse_permissions(s: &str) -> serenity::Permissions {
         return serenity::Permissions::from_bits_truncate(bits);
     }
 
-    match s.to_ascii_uppercase().as_str() {
+    let upper = s.to_ascii_uppercase();
+    match upper.as_str() {
         "ADMINISTRATOR" => serenity::Permissions::ADMINISTRATOR,
         "MANAGE_GUILD" | "MANAGE_SERVER" => serenity::Permissions::MANAGE_GUILD,
         "MANAGE_ROLES" => serenity::Permissions::MANAGE_ROLES,
@@ -39,7 +40,10 @@ fn parse_permissions(s: &str) -> serenity::Permissions {
         "KICK_MEMBERS" => serenity::Permissions::KICK_MEMBERS,
         "BAN_MEMBERS" => serenity::Permissions::BAN_MEMBERS,
         "MODERATE_MEMBERS" | "TIMEOUT_MEMBERS" => serenity::Permissions::MODERATE_MEMBERS,
-        _ => serenity::Permissions::MANAGE_GUILD,
+        _ => {
+            tracing::warn!("Unknown permission value in config: {}", s);
+            serenity::Permissions::empty()
+        }
     }
 }
 

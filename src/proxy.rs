@@ -54,7 +54,7 @@ async fn get_proxies() -> reqwest::Result<Vec<Proxy>> {
         .lines()
         .filter_map(|l| {
             l.split_once(":").and_then(|p| {
-                if !(p.0.is_empty() || p.0.is_empty()) {
+                if !(p.0.is_empty() || p.1.is_empty()) {
                     Some(p)
                 } else {
                     None
