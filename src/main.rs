@@ -3,6 +3,7 @@ mod greeter;
 mod http;
 mod image;
 mod interaction;
+mod madomagi;
 mod pokemon;
 mod proxy;
 mod verify;
@@ -61,6 +62,8 @@ async fn main() -> Result<(), Error> {
             proxy::command::proxy(),
             proxy::command::proxycheck(),
             pokemon::command::dareda(),
+            madomagi::dj(),
+            madomagi::sayakais(),
         ];
 
         // TODO: MANAGE_GUILDとBAN_MEMBERSなど複数のパーミッションを解釈できないがこれでいいのか？
