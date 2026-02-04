@@ -1,4 +1,5 @@
 mod config;
+mod greeter;
 mod http;
 mod image;
 mod interaction;
@@ -101,6 +102,10 @@ async fn main() -> Result<(), Error> {
 
         event_handler: |ctx, event, _framework: poise::FrameworkContext<'_, Data, _>, data| {
             Box::pin(async move {
+                if let serenity::FullEvent::GuildMemberAddition { new_member } = event {
+                    greeter::handle_member_add(ctx, data, new_member).await?;
+                }
+
                 if let serenity::FullEvent::InteractionCreate { interaction } = event
                     && let serenity::Interaction::Component(comp) = interaction
                 {

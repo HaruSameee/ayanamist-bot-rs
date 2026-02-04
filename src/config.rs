@@ -1,3 +1,4 @@
+use poise::serenity_prelude as serenity;
 use serde::Deserialize;
 use std::{fs, time::Duration};
 
@@ -8,6 +9,7 @@ pub struct Config {
     pub discord: Discord,
     pub roles: Roles,
     pub pokemon: Pokemon,
+    pub greeter: Greeter,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -17,6 +19,11 @@ pub struct Discord {
 
     #[serde(default = "default_captcha_perm")]
     pub captcha_default_permission: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Greeter {
+    pub channel_id: serenity::ChannelId,
 }
 
 fn default_captcha_perm() -> String {

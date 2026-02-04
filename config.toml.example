@@ -10,3 +10,6 @@ staff = 3
 [pokemon]
 max_retry = 5
 time_limit = "5 minutes"
+
+[greeter]
+channel_id = 1000000000000000000
