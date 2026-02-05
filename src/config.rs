@@ -15,22 +15,17 @@ pub struct Config {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Guild {
-    pub id: u64,
+    pub id: serenity::GuildId,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct Captcha {
-    #[serde(default = "default_captcha_perm")]
     pub default_permission: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Greeter {
     pub channel_id: serenity::ChannelId,
-}
-
-fn default_captcha_perm() -> String {
-    "MANAGE_GUILD".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -27,22 +27,6 @@ async fn ping(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-// 文字列やu64をPermissionsへ変換する
-fn parse_permissions(s: &str) -> serenity::Permissions {
-    let s = s.trim();
-
-    // 数値をbitとして解釈する
-    if let Ok(bits) = s.parse::<u64>() {
-        return serenity::Permissions::from_bits_truncate(bits);
-    }
-
-    serenity::Permissions::from_name(&s.to_ascii_uppercase()).unwrap_or_else(|| {
-        tracing::warn!("Unknown permission value in config: {}", s);
-
-        serenity::Permissions::empty()
-    })
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     // TODO: .expect()また.ok()にする
@@ -54,7 +38,6 @@ async fn main() -> Result<(), Error> {
 
     // TODO: .expect()にする
     let token = env::var("DISCORD_BOT_TOKEN").unwrap();
-    let guild_id = serenity::GuildId::new(config.guild.id);
 
     let config_for_setup = config.clone();
 
@@ -71,8 +54,14 @@ async fn main() -> Result<(), Error> {
             madomagi::sayakais(),
         ];
 
-        // TODO: MANAGE_GUILDとBAN_MEMBERSなど複数のパーミッションを解釈できないがこれでいいのか？
-        let captcha_perm = parse_permissions(&config.captcha.default_permission);
+        let captcha_perm = serenity::Permissions::from_name(
+            &config
+                .captcha
+                .default_permission
+                .trim()
+                .to_ascii_uppercase(),
+        )
+        .unwrap_or(serenity::Permissions::ADMINISTRATOR);
         let mut captcha_command = verify::captcha::captcha();
 
         captcha_command.default_member_permissions = captcha_perm;
@@ -141,8 +130,12 @@ async fn main() -> Result<(), Error> {
             Box::pin(async move {
                 println!("Logged in as {}", ready.user.name);
 
-                poise::builtins::register_in_guild(ctx, &framework.options().commands, guild_id)
-                    .await?;
+                poise::builtins::register_in_guild(
+                    ctx,
+                    &framework.options().commands,
+                    config.guild.id,
+                )
+                .await?;
 
                 Ok(Data { config })
             })
@@ -155,22 +148,4 @@ async fn main() -> Result<(), Error> {
 
     client.start().await?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use poise::serenity_prelude as serenity;
-
-    #[test]
-    fn it_works() {
-        assert_eq!(
-            parse_permissions("BAN_MEMBERS"),
-            serenity::Permissions::BAN_MEMBERS
-        );
-        assert_eq!(
-            parse_permissions("INVALID_PERMISSION_NAME"),
-            serenity::Permissions::empty()
-        );
-    }
 }
