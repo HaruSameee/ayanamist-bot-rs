@@ -17,6 +17,7 @@ config.toml
 
 # ===== Logs =====
 *.log
+logs
 
 # ===== Visual Studio =====
 .vs/

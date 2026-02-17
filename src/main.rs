@@ -3,6 +3,7 @@ mod config;
 mod greeter;
 mod http;
 mod image;
+mod logger;
 mod madomagi;
 mod pokemon;
 mod proxy;
@@ -25,7 +26,7 @@ async fn main() -> Result<(), Error> {
     // TODO: .expect()また.ok()にする
     dotenvy::dotenv().unwrap();
 
-    tracing_subscriber::fmt::init();
+    logger::init_tracing_subscriber().expect("setting subscriber failed");
 
     let config = Config::load().map_err(|e| format!("config.toml の読み込みに失敗: {e}"))?;
 
@@ -66,7 +67,11 @@ async fn main() -> Result<(), Error> {
 
     let options = poise::FrameworkOptions {
         commands,
-        on_error: |_err: poise::FrameworkError<'_, Data, Error>| Box::pin(async move {}),
+        on_error: |err: poise::FrameworkError<'_, Data, Error>| {
+            Box::pin(async move {
+                tracing::warn!("Global error: {err}");
+            })
+        },
 
         event_handler: |ctx, event, _framework: poise::FrameworkContext<'_, Data, _>, data| {
             Box::pin(async move {
@@ -99,7 +104,7 @@ async fn main() -> Result<(), Error> {
         .setup(move |ctx, ready, framework| {
             let config = config_for_setup.clone();
             Box::pin(async move {
-                println!("Logged in as {}", ready.user.name);
+                tracing::info!("Logged in as {}", ready.user.name);
 
                 poise::builtins::register_in_guild(
                     ctx,
