@@ -106,6 +106,14 @@ async fn main() -> Result<(), Error> {
             let config = config_for_setup.clone();
             Box::pin(async move {
                 tracing::info!("Logged in as {}", ready.user.name);
+                tracing::debug!(
+                    "Intents: {}",
+                    intents
+                        .iter_names()
+                        .map(|(s, _)| s)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
 
                 poise::builtins::register_in_guild(
                     ctx,

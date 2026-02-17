@@ -19,6 +19,9 @@ pub fn init_tracing_subscriber() -> Result<(), Error> {
     #[cfg(not(debug_assertions))]
     let file_layer_filter = format!("{crate_name}=debug,warn");
 
+    #[cfg(debug_assertions)]
+    let console_layer_filter = format!("{crate_name}=trace,warn");
+    #[cfg(not(debug_assertions))]
     let console_layer_filter = format!("{crate_name}=info,warn");
 
     let file_layer = fmt::Layer::default()
