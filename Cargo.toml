@@ -32,3 +32,6 @@ wana_kana = "4.0.0"
 dotenvy = "0.15.7"
 tracing-appender = "0.2.4"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "fmt"] }
+
+[dev-dependencies]
+wiremock = "0.6"

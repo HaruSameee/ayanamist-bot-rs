@@ -4,7 +4,7 @@ use regex::Regex;
 use std::borrow::Cow;
 use std::sync::LazyLock;
 
-struct ProxyInfo {
+pub(crate) struct ProxyInfo {
     address: String,
     typ: String,
 }
@@ -19,9 +19,8 @@ const BUTTON_DEFINES: &[(&str, &str)] = &[
 
 static EMBED_PROXY_SEP: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s*\|\s*").unwrap());
 
-fn read_embed_proxies(m: &serenity::Message) -> Option<Vec<ProxyInfo>> {
-    let lines = m.embeds.first().and_then(|e| e.description.as_ref())?;
-    let proxies: Vec<_> = lines
+pub(crate) fn parse_proxy_lines(description: &str) -> Vec<ProxyInfo> {
+    description
         .lines()
         .filter_map(|l| {
             let parts: Vec<&str> = EMBED_PROXY_SEP.split(l).collect();
@@ -38,7 +37,12 @@ fn read_embed_proxies(m: &serenity::Message) -> Option<Vec<ProxyInfo>> {
                 typ: typ.to_string(),
             })
         })
-        .collect();
+        .collect()
+}
+
+fn read_embed_proxies(m: &serenity::Message) -> Option<Vec<ProxyInfo>> {
+    let description = m.embeds.first().and_then(|e| e.description.as_deref())?;
+    let proxies = parse_proxy_lines(description);
 
     (!proxies.is_empty()).then_some(proxies)
 }
@@ -166,5 +170,85 @@ pub async fn handle_component(
             Ok(())
         }
         _ => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn message_with_description(description: Option<&str>) -> serenity::Message {
+        let mut embed = serenity::Embed::default();
+        embed.description = description.map(str::to_string);
+
+        let mut m = serenity::Message::default();
+        m.embeds = vec![embed];
+        m
+    }
+
+    #[test]
+    fn parse_proxy_lines_parses_multiple_lines() {
+        let proxies = parse_proxy_lines("1.2.3.4:8080 | http\n5.6.7.8:1080 | socks5");
+
+        assert_eq!(proxies.len(), 2);
+        assert_eq!(proxies[0].address, "1.2.3.4:8080");
+        assert_eq!(proxies[0].typ, "http");
+        assert_eq!(proxies[1].address, "5.6.7.8:1080");
+        assert_eq!(proxies[1].typ, "socks5");
+    }
+
+    #[test]
+    fn parse_proxy_lines_uses_third_part_when_three_or_more_parts() {
+        let proxies = parse_proxy_lines("1.2.3.4:8080 | extra | http | trailing");
+
+        assert_eq!(proxies.len(), 1);
+        assert_eq!(proxies[0].address, "1.2.3.4:8080");
+        assert_eq!(proxies[0].typ, "http");
+    }
+
+    #[test]
+    fn parse_proxy_lines_skips_unparsable_lines() {
+        let proxies =
+            parse_proxy_lines("no separator here\n1.2.3.4:8080 | http\n\nanother invalid");
+
+        assert_eq!(proxies.len(), 1);
+        assert_eq!(proxies[0].address, "1.2.3.4:8080");
+        assert_eq!(proxies[0].typ, "http");
+    }
+
+    #[test]
+    fn parse_proxy_lines_empty_description_returns_empty() {
+        assert!(parse_proxy_lines("").is_empty());
+    }
+
+    #[test]
+    fn read_embed_proxies_returns_none_without_embeds() {
+        let m = serenity::Message::default();
+
+        assert!(read_embed_proxies(&m).is_none());
+    }
+
+    #[test]
+    fn read_embed_proxies_returns_none_without_description() {
+        let m = message_with_description(None);
+
+        assert!(read_embed_proxies(&m).is_none());
+    }
+
+    #[test]
+    fn read_embed_proxies_returns_none_for_empty_description() {
+        let m = message_with_description(Some(""));
+
+        assert!(read_embed_proxies(&m).is_none());
+    }
+
+    #[test]
+    fn read_embed_proxies_returns_proxies_from_description() {
+        let m = message_with_description(Some("1.2.3.4:8080 | http\ninvalid line"));
+        let proxies = read_embed_proxies(&m).unwrap();
+
+        assert_eq!(proxies.len(), 1);
+        assert_eq!(proxies[0].address, "1.2.3.4:8080");
+        assert_eq!(proxies[0].typ, "http");
     }
 }

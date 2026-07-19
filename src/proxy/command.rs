@@ -1,4 +1,4 @@
-use crate::proxy::api::{OptString, Proxy, check_proxies, get_proxies};
+use crate::proxy::api::{OptString, Proxy, ProxyscrapeClient};
 use crate::{Context, Error};
 use poise::serenity_prelude as serenity;
 use rand::seq::SliceRandom;
@@ -18,11 +18,12 @@ pub async fn proxycheck(
 
     ctx.defer().await?;
 
-    let results = match check_proxies(&[Proxy {
-        ip: ip.to_string(),
-        port: port.to_string(),
-    }])
-    .await
+    let results = match ProxyscrapeClient::default()
+        .check_proxies(&[Proxy {
+            ip: ip.to_string(),
+            port: port.to_string(),
+        }])
+        .await
     {
         Ok(result) => result,
         Err(err) => {
@@ -96,12 +97,13 @@ pub async fn proxy(
 
     ctx.defer().await?;
 
-    let mut proxies = get_proxies().await?;
+    let client = ProxyscrapeClient::default();
+    let mut proxies = client.get_proxies().await?;
 
     proxies.shuffle(&mut thread_rng());
 
     let selected_proxy = &proxies[0..proxies.len().min(amount)];
-    let results = match check_proxies(selected_proxy).await {
+    let results = match client.check_proxies(selected_proxy).await {
         Ok(results) => results,
         Err(err) => {
             // TODO
