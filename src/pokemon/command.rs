@@ -1,19 +1,25 @@
 use crate::{
     Context, Error,
     image::{alpha_to_mask, background, encode_webp},
-    pokemon::api::Pokemon,
 };
 use futures::StreamExt;
 use image::ImageReader;
 use poise::serenity_prelude as serenity;
-use rand::thread_rng;
+use rand::SeedableRng;
+use rand::rngs::StdRng;
 use std::io::Cursor;
 use wana_kana::ConvertJapanese;
 
 /// ポケモンのシルエットクイズができます。
 #[poise::command(slash_command, guild_only)] // future cannot be sent between threads safely
 pub async fn dareda(ctx: Context<'_>) -> Result<(), Error> {
-    let pokemon = Pokemon::random(&mut thread_rng());
+    ctx.defer().await?;
+
+    let pokemon = ctx
+        .data()
+        .pokemon_api
+        .random(&mut StdRng::from_entropy())
+        .await;
     let pokemon = match pokemon {
         Ok(pokemon) => pokemon,
         Err(err) => {
@@ -146,7 +152,7 @@ pub async fn dareda(ctx: Context<'_>) -> Result<(), Error> {
 
         retry += 1;
 
-        if retry > data.config.pokemon.max_retry {
+        if should_end(retry, data.config.pokemon.max_retry) {
             ctx.channel_id()
                 .send_message(
                     ctx,
@@ -186,4 +192,24 @@ pub async fn dareda(ctx: Context<'_>) -> Result<(), Error> {
         .await?;
 
     Ok(())
+}
+
+/// 回答可能回数を使い切ったかどうかを返す。
+fn should_end(retry: usize, max_retry: usize) -> bool {
+    retry >= max_retry
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_end;
+
+    #[test]
+    fn should_end_at_max_retry() {
+        assert!(should_end(5, 5));
+    }
+
+    #[test]
+    fn should_not_end_before_max_retry() {
+        assert!(!should_end(4, 5));
+    }
 }

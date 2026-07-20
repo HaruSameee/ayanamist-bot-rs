@@ -19,19 +19,21 @@ type Context<'a> = poise::Context<'a, Data, Error>;
 #[derive(Clone)]
 struct Data {
     config: Config,
+    pokemon_api: pokemon::api::PokemonApi,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    // TODO: .expect()また.ok()にする
-    dotenvy::dotenv().unwrap();
+    // .env は存在しなくてもよい（環境変数が直接設定されていれば起動できる）
+    let _ = dotenvy::dotenv();
 
-    logger::init_tracing_subscriber().expect("setting subscriber failed");
+    logger::init_tracing_subscriber().map_err(|e| format!("ロガーの初期化に失敗: {e}"))?;
 
     let config = Config::load().map_err(|e| format!("config.toml の読み込みに失敗: {e}"))?;
 
-    // TODO: .expect()にする
-    let token = env::var("DISCORD_BOT_TOKEN").unwrap();
+    let token = env::var("DISCORD_BOT_TOKEN").map_err(
+        |_| "環境変数 DISCORD_BOT_TOKEN が設定されていません。.env に記述するか環境変数を設定してください",
+    )?;
 
     let config_for_setup = config.clone();
 
@@ -122,7 +124,10 @@ async fn main() -> Result<(), Error> {
                 )
                 .await?;
 
-                Ok(Data { config })
+                Ok(Data {
+                    config,
+                    pokemon_api: pokemon::api::PokemonApi::default(),
+                })
             })
         })
         .build();

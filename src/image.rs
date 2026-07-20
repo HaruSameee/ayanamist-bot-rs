@@ -98,4 +98,24 @@ mod tests {
         assert_eq!(&bytes[0..4], b"RIFF");
         assert_eq!(&bytes[8..12], b"WEBP");
     }
+
+    #[test]
+    fn png_roundtrip_via_guessed_format() {
+        // pokemon/command.rs のスプライト画像デコード経路と同じ形で PNG が扱えることを担保する
+        use image::ImageReader;
+        use std::io::Cursor;
+
+        let img = rgba_image(&[[10, 20, 30, 255], [200, 100, 50, 255]]);
+        let mut buf = Cursor::new(Vec::new());
+        img.write_to(&mut buf, image::ImageFormat::Png).unwrap();
+
+        let decoded = ImageReader::new(Cursor::new(buf.into_inner()))
+            .with_guessed_format()
+            .unwrap()
+            .decode()
+            .unwrap();
+
+        assert_eq!(decoded.width(), img.width());
+        assert_eq!(decoded.height(), img.height());
+    }
 }
