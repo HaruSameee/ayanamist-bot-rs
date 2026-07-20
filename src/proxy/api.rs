@@ -62,13 +62,8 @@ impl ProxyscrapeClient {
             .await?
             .lines()
             .filter_map(|l| {
-                l.split_once(":").and_then(|p| {
-                    if !(p.0.is_empty() || p.1.is_empty()) {
-                        Some(p)
-                    } else {
-                        None
-                    }
-                })
+                l.split_once(":")
+                    .filter(|p| !(p.0.is_empty() || p.1.is_empty()))
             })
             .map(|(ip, port)| Proxy {
                 ip: ip.to_string(),

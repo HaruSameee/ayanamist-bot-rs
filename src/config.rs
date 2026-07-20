@@ -10,6 +10,26 @@ pub struct Config {
     pub verify: Verify,
     pub pokemon: Pokemon,
     pub greeter: Greeter,
+    #[serde(default)]
+    pub database: Database,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Database {
+    #[serde(default = "default_database_path")]
+    pub path: String,
+}
+
+impl Default for Database {
+    fn default() -> Self {
+        Self {
+            path: default_database_path(),
+        }
+    }
+}
+
+fn default_database_path() -> String {
+    crate::db::DEFAULT_DATABASE_PATH.to_string()
 }
 
 #[derive(Debug, Clone, Deserialize)]

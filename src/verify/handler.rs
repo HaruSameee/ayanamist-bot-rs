@@ -2,7 +2,7 @@ use crate::image::encode_webp;
 use crate::verify::captcha::{generate_answer, render_captcha};
 use crate::verify::common::{COLOR_AQUA, COLOR_FAIL, COLOR_WHITE, FOOTER_ICON_URL};
 use crate::verify::state::{Challenge, FailureTracker, SubmitOutcome};
-use crate::{Data, Error};
+use crate::{Data, Error, db};
 use dashmap::DashMap;
 use poise::serenity_prelude as serenity;
 use std::sync::LazyLock;
@@ -31,6 +31,13 @@ pub async fn cleanup_task() {
 
 fn system_footer() -> serenity::CreateEmbedFooter {
     serenity::CreateEmbedFooter::new("Ayanamist System").icon_url(FOOTER_ICON_URL)
+}
+
+/// 認証結果を DB に記録する。失敗しても認証フローは継続する。
+async fn record_verify_log(data: &Data, user_id: serenity::UserId, result: &'static str) {
+    if let Err(err) = db::insert_verify_log(&data.db, user_id.get(), result, db::now_unix()).await {
+        tracing::error!("failed to record verify log: {err}");
+    }
 }
 
 fn ephemeral_response(
@@ -199,6 +206,7 @@ pub async fn handle_modal(
 
     match challenge.submit(&input, now) {
         SubmitOutcome::Correct => {
+            record_verify_log(data, user_id, "success").await;
             let Some(guild_id) = interaction.guild_id else {
                 return Ok(());
             };
@@ -217,6 +225,7 @@ pub async fn handle_modal(
                 .await?;
         }
         SubmitOutcome::Wrong { invalidated } => {
+            record_verify_log(data, user_id, "fail").await;
             FAILURES.entry(user_id).or_default().record_failure(now);
             if !invalidated {
                 // 試行回数が残っているのでチャレンジを継続する
@@ -232,6 +241,7 @@ pub async fn handle_modal(
                 .await?;
         }
         SubmitOutcome::Expired => {
+            record_verify_log(data, user_id, "timeout").await;
             FAILURES.entry(user_id).or_default().record_failure(now);
             let embed = serenity::CreateEmbed::new()
                 .color(COLOR_FAIL)

@@ -1,5 +1,5 @@
 use crate::{
-    Context, Error,
+    Context, Error, db,
     image::{alpha_to_mask, background, encode_webp},
 };
 use futures::StreamExt;
@@ -11,8 +11,14 @@ use std::io::Cursor;
 use wana_kana::ConvertJapanese;
 
 /// ポケモンのシルエットクイズができます。
+#[poise::command(slash_command, guild_only, subcommands("play", "ranking", "stats"))]
+pub async fn dareda(_ctx: Context<'_>) -> Result<(), Error> {
+    Ok(())
+}
+
+/// ポケモンのシルエットクイズを始めます。
 #[poise::command(slash_command, guild_only)] // future cannot be sent between threads safely
-pub async fn dareda(ctx: Context<'_>) -> Result<(), Error> {
+pub async fn play(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer().await?;
 
     let pokemon = ctx
@@ -124,6 +130,19 @@ pub async fn dareda(ctx: Context<'_>) -> Result<(), Error> {
                 )
                 .await?;
 
+            if let Err(err) = db::insert_dareda_result(
+                &data.db,
+                m.author.id.get(),
+                pokemon.id,
+                true,
+                retry as u32 + 1,
+                db::now_unix(),
+            )
+            .await
+            {
+                tracing::error!("failed to record dareda result: {err}");
+            }
+
             return Ok(());
         }
 
@@ -144,6 +163,19 @@ pub async fn dareda(ctx: Context<'_>) -> Result<(), Error> {
                         ),
                 )
                 .await?;
+
+            if let Err(err) = db::insert_dareda_result(
+                &data.db,
+                ctx.author().id.get(),
+                pokemon.id,
+                false,
+                retry as u32,
+                db::now_unix(),
+            )
+            .await
+            {
+                tracing::error!("failed to record dareda result: {err}");
+            }
 
             return Ok(());
         }
@@ -170,6 +202,19 @@ pub async fn dareda(ctx: Context<'_>) -> Result<(), Error> {
                 )
                 .await?;
 
+            if let Err(err) = db::insert_dareda_result(
+                &data.db,
+                ctx.author().id.get(),
+                pokemon.id,
+                false,
+                retry as u32,
+                db::now_unix(),
+            )
+            .await
+            {
+                tracing::error!("failed to record dareda result: {err}");
+            }
+
             return Ok(());
         }
     }
@@ -190,6 +235,153 @@ pub async fn dareda(ctx: Context<'_>) -> Result<(), Error> {
                 ),
         )
         .await?;
+
+    if let Err(err) = db::insert_dareda_result(
+        &data.db,
+        ctx.author().id.get(),
+        pokemon.id,
+        false,
+        retry as u32,
+        db::now_unix(),
+    )
+    .await
+    {
+        tracing::error!("failed to record dareda result: {err}");
+    }
+
+    Ok(())
+}
+
+/// ランキングの集計期間。
+#[derive(Debug, Clone, Copy, poise::ChoiceParameter)]
+pub enum RankingPeriod {
+    #[name = "all"]
+    All,
+    #[name = "month"]
+    Month,
+    #[name = "week"]
+    Week,
+}
+
+impl RankingPeriod {
+    fn to_db_period(self) -> db::Period {
+        match self {
+            RankingPeriod::All => db::Period::All,
+            RankingPeriod::Month => db::Period::Month,
+            RankingPeriod::Week => db::Period::Week,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            RankingPeriod::All => "全期間",
+            RankingPeriod::Month => "月間",
+            RankingPeriod::Week => "週間",
+        }
+    }
+}
+
+/// 正解数のランキングを表示します。
+#[poise::command(slash_command, guild_only)]
+pub async fn ranking(
+    ctx: Context<'_>,
+    #[description = "集計期間（省略時は all）"] period: Option<RankingPeriod>,
+) -> Result<(), Error> {
+    ctx.defer().await?;
+
+    let period = period.unwrap_or(RankingPeriod::All);
+    let rows =
+        db::dareda_ranking(&ctx.data().db, period.to_db_period(), db::now_unix(), 10).await?;
+
+    let description = if rows.is_empty() {
+        "まだ記録がありません。".to_owned()
+    } else {
+        rows.iter()
+            .enumerate()
+            .map(|(i, row)| {
+                format!(
+                    "{}. <@{}> 正解数: {} / 平均試行: {:.1}",
+                    i + 1,
+                    row.user_id,
+                    row.correct_count,
+                    row.avg_attempts
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    ctx.send(
+        poise::CreateReply::default().embed(
+            serenity::CreateEmbed::new()
+                .title(format!("だーれだ 正解数ランキング（{}）", period.label()))
+                .description(description)
+                .color(0xffb7c5),
+        ),
+    )
+    .await?;
+
+    Ok(())
+}
+
+/// だーれだの戦績を表示します。
+#[poise::command(slash_command, guild_only)]
+pub async fn stats(
+    ctx: Context<'_>,
+    #[description = "対象ユーザー（省略時は自分）"] user: Option<serenity::User>,
+) -> Result<(), Error> {
+    ctx.defer().await?;
+
+    let target = user.as_ref().unwrap_or_else(|| ctx.author());
+    let stats = db::dareda_stats(&ctx.data().db, target.id.get()).await?;
+
+    let accuracy = if stats.total_count > 0 {
+        format!(
+            "{:.1}%",
+            stats.correct_count as f64 / stats.total_count as f64 * 100.0
+        )
+    } else {
+        "-".to_owned()
+    };
+    let avg_attempts = stats
+        .avg_attempts
+        .map_or("-".to_owned(), |avg| format!("{avg:.1}"));
+    let history = if stats.recent.is_empty() {
+        "まだ記録がありません。".to_owned()
+    } else {
+        stats
+            .recent
+            .iter()
+            .map(|entry| {
+                format!(
+                    "<t:{}:R> No.{} {}（{}回）",
+                    entry.answered_at,
+                    entry.pokemon_id,
+                    if entry.is_correct {
+                        "正解"
+                    } else {
+                        "不正解"
+                    },
+                    entry.attempts
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    ctx.send(
+        poise::CreateReply::default().embed(
+            serenity::CreateEmbed::new()
+                .title(format!("だーれだ 戦績: {}", target.name))
+                .color(0xffb7c5)
+                .field("正解数", stats.correct_count.to_string(), true)
+                .field("挑戦数", stats.total_count.to_string(), true)
+                .field("正解率", accuracy, true)
+                .field("平均試行回数", avg_attempts, true)
+                .field("直近の履歴", history, false),
+        ),
+    )
+    .await?;
 
     Ok(())
 }

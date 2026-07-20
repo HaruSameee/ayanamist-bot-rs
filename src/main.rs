@@ -1,5 +1,6 @@
 mod bot;
 mod config;
+mod db;
 mod greeter;
 mod http;
 mod image;
@@ -20,6 +21,7 @@ type Context<'a> = poise::Context<'a, Data, Error>;
 struct Data {
     config: Config,
     pokemon_api: pokemon::api::PokemonApi,
+    db: sqlx::SqlitePool,
 }
 
 #[tokio::main]
@@ -30,6 +32,11 @@ async fn main() -> Result<(), Error> {
     logger::init_tracing_subscriber().map_err(|e| format!("ロガーの初期化に失敗: {e}"))?;
 
     let config = Config::load().map_err(|e| format!("config.toml の読み込みに失敗: {e}"))?;
+
+    let pool = db::connect(&config.database.path)
+        .await
+        .map_err(|e| format!("データベースの初期化に失敗: {e}"))?;
+    let pool_for_setup = pool.clone();
 
     let token = env::var("DISCORD_BOT_TOKEN").map_err(
         |_| "環境変数 DISCORD_BOT_TOKEN が設定されていません。.env に記述するか環境変数を設定してください",
@@ -120,6 +127,7 @@ async fn main() -> Result<(), Error> {
         .options(options)
         .setup(move |ctx, ready, framework| {
             let config = config_for_setup.clone();
+            let pool = pool_for_setup.clone();
             Box::pin(async move {
                 tracing::info!("Logged in as {}", ready.user.name);
                 tracing::debug!(
@@ -143,6 +151,7 @@ async fn main() -> Result<(), Error> {
                 Ok(Data {
                     config,
                     pokemon_api: pokemon::api::PokemonApi::default(),
+                    db: pool,
                 })
             })
         })

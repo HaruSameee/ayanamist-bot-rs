@@ -35,6 +35,12 @@ humantime-serde = "1.1.1"
 wana_kana = "4.0.0"
 dotenvy = "0.15.7"
 tracing-appender = "0.2.4"
+sqlx = { version = "0.9", default-features = false, features = [
+    "runtime-tokio",
+    "sqlite",
+    "migrate",
+    "macros",
+] }
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "fmt"] }
 
 [dev-dependencies]

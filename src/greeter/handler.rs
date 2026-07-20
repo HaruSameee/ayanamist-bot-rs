@@ -1,4 +1,4 @@
-use crate::{Data, Error};
+use crate::{Data, Error, db};
 use ::serenity::all::Mentionable;
 use poise::serenity_prelude as serenity;
 
@@ -9,6 +9,20 @@ pub async fn handle_member_add(
 ) -> Result<(), Error> {
     if new_member.guild_id != data.config.guild.guild_id {
         return Ok(());
+    }
+
+    let joined_at = new_member
+        .joined_at
+        .map_or_else(db::now_unix, |t| t.timestamp());
+    if let Err(err) = db::insert_member_join(
+        &data.db,
+        new_member.user.id.get(),
+        joined_at,
+        new_member.user.created_at().timestamp(),
+    )
+    .await
+    {
+        tracing::error!("failed to record member join: {err}");
     }
 
     data.config

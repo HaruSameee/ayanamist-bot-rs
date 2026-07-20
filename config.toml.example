@@ -12,3 +12,6 @@ time_limit = "5 minutes"
 
 [greeter]
 channel_id = 1000000000000000000
+
+[database]
+path = "data/bot.db"
