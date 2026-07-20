@@ -1,30 +1,58 @@
-use crate::verify::common::{
-    ANSWER_PREFIX, COLOR_AQUA, COLOR_FAIL, COLOR_WHITE, FOOTER_ICON_URL, START_ID,
-};
+use crate::image::encode_webp;
+use crate::verify::captcha::{generate_answer, render_captcha};
+use crate::verify::common::{COLOR_AQUA, COLOR_FAIL, COLOR_WHITE, FOOTER_ICON_URL};
+use crate::verify::state::{Challenge, FailureTracker, SubmitOutcome};
 use crate::{Data, Error};
 use dashmap::DashMap;
-use once_cell::sync::Lazy;
 use poise::serenity_prelude as serenity;
-use rand::Rng;
-use rand::seq::SliceRandom;
+use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
-const TIME_LIMIT: Duration = Duration::from_secs(20);
+pub const START_ID: &str = "captcha:start";
+pub const ANSWER_ID: &str = "captcha:answer";
+pub const SUBMIT_ID: &str = "captcha:submit";
+const INPUT_ID: &str = "captcha:input";
+const CLEANUP_INTERVAL: Duration = Duration::from_secs(60);
+
+static CHALLENGES: LazyLock<DashMap<serenity::UserId, Challenge>> = LazyLock::new(DashMap::new);
+static FAILURES: LazyLock<DashMap<serenity::UserId, FailureTracker>> = LazyLock::new(DashMap::new);
+
+/// 期限切れのチャレンジとアイドルな失敗トラッカーを定期的に削除する。
+pub async fn cleanup_task() {
+    let mut interval = tokio::time::interval(CLEANUP_INTERVAL);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        interval.tick().await;
+        let now = Instant::now();
+        CHALLENGES.retain(|_, c| !c.is_expired(now));
+        FAILURES.retain(|_, f| !f.is_idle(now));
+    }
+}
+
+fn system_footer() -> serenity::CreateEmbedFooter {
+    serenity::CreateEmbedFooter::new("Ayanamist System").icon_url(FOOTER_ICON_URL)
+}
+
+fn ephemeral_response(
+    f: impl FnOnce(
+        serenity::CreateInteractionResponseMessage,
+    ) -> serenity::CreateInteractionResponseMessage,
+) -> serenity::CreateInteractionResponse {
+    serenity::CreateInteractionResponse::Message(
+        f(serenity::CreateInteractionResponseMessage::new()).ephemeral(true),
+    )
+}
 
 pub async fn handle_component(
     ctx: &serenity::Context,
-    data: &Data,
+    _data: &Data,
     interaction: &serenity::ComponentInteraction,
 ) -> Result<(), Error> {
-    let id = interaction.data.custom_id.as_str();
-
-    if id == START_ID {
-        return on_start(ctx, interaction).await;
+    match interaction.data.custom_id.as_str() {
+        START_ID => on_start(ctx, interaction).await,
+        ANSWER_ID => on_answer_open(ctx, interaction).await,
+        _ => Ok(()),
     }
-    if let Some(rest) = id.strip_prefix(ANSWER_PREFIX) {
-        return on_answer(ctx, data, interaction, rest).await;
-    }
-    Ok(())
 }
 
 async fn on_start(
@@ -32,63 +60,54 @@ async fn on_start(
     interaction: &serenity::ComponentInteraction,
 ) -> Result<(), Error> {
     let user_id = interaction.user.id;
+    let now = Instant::now();
 
-    if let Some(existing) = CHALLENGES.get(&user_id) {
-        if Instant::now() <= existing.expires_at {
-            interaction
-                .create_response(
-                    ctx,
-                    serenity::CreateInteractionResponse::Message(
-                        serenity::CreateInteractionResponseMessage::new()
-                            .content("すでに挑戦中です。")
-                            .ephemeral(true),
-                    ),
-                )
-                .await?;
-            return Ok(());
-        }
-        CHALLENGES.remove(&user_id);
+    if let Some(tracker) = FAILURES.get(&user_id)
+        && tracker.is_in_cooldown(now)
+    {
+        interaction
+            .create_response(
+                ctx,
+                ephemeral_response(|m| {
+                    m.content(
+                        "連続して失敗したため、認証は一時的に制限されています。しばらく時間をおいてから再度お試しください。",
+                    )
+                }),
+            )
+            .await?;
+        return Ok(());
     }
 
-    let (a, b, correct, mut choices) = {
+    if let Some(existing) = CHALLENGES.get(&user_id)
+        && !existing.is_expired(now)
+    {
+        interaction
+            .create_response(ctx, ephemeral_response(|m| m.content("すでに挑戦中です。")))
+            .await?;
+        return Ok(());
+    }
+    CHALLENGES.remove(&user_id);
+
+    let (answer, webp) = tokio::task::spawn_blocking(|| {
         let mut rng = rand::thread_rng();
-        let a = rng.gen_range(2..=9);
-        let b = rng.gen_range(2..=9);
-        let correct = a * b;
+        let answer = generate_answer(&mut rng);
+        render_captcha(&mut rng, &answer)
+            .and_then(|img| encode_webp(&img))
+            .map(|bytes| (answer, bytes))
+    })
+    .await??;
 
-        let mut choices = vec![correct];
-        while choices.len() < 5 {
-            let d = rng.gen_range(2..=81);
-            if !choices.contains(&d) {
-                choices.push(d);
-            }
-        }
-        choices.shuffle(&mut rng);
-        (a, b, correct, choices)
-    };
-
-    CHALLENGES.insert(
-        user_id,
-        Challenge {
-            correct,
-            expires_at: Instant::now() + TIME_LIMIT,
-        },
-    );
+    CHALLENGES.insert(user_id, Challenge::new(answer, now));
 
     let embed = serenity::CreateEmbed::new()
         .color(COLOR_WHITE)
         .title("認証チャレンジ")
-        .description(format!("**{a} × {b} = ?**"))
-        .footer(serenity::CreateEmbedFooter::new("制限時間：20秒"));
+        .description("画像に表示されている英数字を入力してください。")
+        .footer(serenity::CreateEmbedFooter::new("制限時間：120秒"));
 
-    let buttons = choices
-        .drain(..)
-        .map(|n| {
-            serenity::CreateButton::new(format!("{ANSWER_PREFIX}{n}"))
-                .label(n.to_string())
-                .style(serenity::ButtonStyle::Secondary)
-        })
-        .collect();
+    let button = serenity::CreateButton::new(ANSWER_ID)
+        .label("回答する")
+        .style(serenity::ButtonStyle::Primary);
 
     interaction
         .create_response(
@@ -96,7 +115,8 @@ async fn on_start(
             serenity::CreateInteractionResponse::Message(
                 serenity::CreateInteractionResponseMessage::new()
                     .embed(embed)
-                    .components(vec![serenity::CreateActionRow::Buttons(buttons)])
+                    .add_file(serenity::CreateAttachment::bytes(webp, "captcha.webp"))
+                    .components(vec![serenity::CreateActionRow::Buttons(vec![button])])
                     .ephemeral(true),
             ),
         )
@@ -105,100 +125,124 @@ async fn on_start(
     Ok(())
 }
 
-#[derive(Clone)]
-struct Challenge {
-    correct: u32,
-    expires_at: Instant,
-}
-
-static CHALLENGES: Lazy<DashMap<serenity::UserId, Challenge>> = Lazy::new(DashMap::new);
-
-async fn on_answer(
+async fn on_answer_open(
     ctx: &serenity::Context,
-    data: &Data,
     interaction: &serenity::ComponentInteraction,
-    answered_str: &str,
 ) -> Result<(), Error> {
     let user_id = interaction.user.id;
-    let answered: u32 = match answered_str.parse() {
-        Ok(v) => v,
-        Err(_) => return Ok(()),
-    };
+    let now = Instant::now();
+    let valid = CHALLENGES.get(&user_id).is_some_and(|c| !c.is_expired(now));
 
-    let Some(ch) = CHALLENGES.get(&user_id).map(|v| v.clone()) else {
-        return Ok(());
-    };
-
-    if Instant::now() > ch.expires_at {
-        CHALLENGES.remove(&user_id);
-
-        let embed = serenity::CreateEmbed::new()
-            .color(COLOR_FAIL)
-            .title("⌛ 時間切れ")
-            .description("もう一度やり直してください。")
-            .footer(serenity::CreateEmbedFooter::new("Ayanamist System").icon_url(FOOTER_ICON_URL));
-
+    if !valid {
         interaction
             .create_response(
                 ctx,
-                serenity::CreateInteractionResponse::Message(
-                    serenity::CreateInteractionResponseMessage::new()
-                        .embed(embed)
-                        .ephemeral(true),
-                ),
+                ephemeral_response(|m| {
+                    m.content("チャレンジが見つかりません。もう一度「認証する」を押してください。")
+                }),
             )
             .await?;
         return Ok(());
     }
 
-    if answered != ch.correct {
-        CHALLENGES.remove(&user_id);
-
-        let embed = serenity::CreateEmbed::new()
-            .color(COLOR_FAIL)
-            .title("❌ 不正解")
-            .description("もう一度やり直してください。")
-            .footer(serenity::CreateEmbedFooter::new("Ayanamist System").icon_url(FOOTER_ICON_URL));
-
-        interaction
-            .create_response(
-                ctx,
-                serenity::CreateInteractionResponse::Message(
-                    serenity::CreateInteractionResponseMessage::new()
-                        .embed(embed)
-                        .ephemeral(true),
-                ),
-            )
-            .await?;
-        return Ok(());
-    }
-
-    let Some(guild_id) = interaction.guild_id else {
-        return Ok(());
-    };
-
-    let member = guild_id.member(ctx, user_id).await?;
-    member
-        .add_role(ctx, data.config.verify.verify_role_id)
-        .await?;
-    CHALLENGES.remove(&user_id);
-
-    let embed = serenity::CreateEmbed::new()
-        .color(COLOR_AQUA)
-        .title("✅ 認証成功")
-        .description("ロールを付与しました。")
-        .footer(serenity::CreateEmbedFooter::new("Ayanamist System").icon_url(FOOTER_ICON_URL));
-
+    let modal = serenity::CreateModal::new(SUBMIT_ID, "認証").components(vec![
+        serenity::CreateActionRow::InputText(
+            serenity::CreateInputText::new(serenity::InputTextStyle::Short, "答え", INPUT_ID)
+                .placeholder("画像に表示されている英数字"),
+        ),
+    ]);
     interaction
-        .create_response(
-            ctx,
-            serenity::CreateInteractionResponse::Message(
-                serenity::CreateInteractionResponseMessage::new()
-                    .embed(embed)
-                    .ephemeral(true),
-            ),
-        )
+        .create_response(ctx, serenity::CreateInteractionResponse::Modal(modal))
         .await?;
+
+    Ok(())
+}
+
+pub async fn handle_modal(
+    ctx: &serenity::Context,
+    data: &Data,
+    interaction: &serenity::ModalInteraction,
+) -> Result<(), Error> {
+    if interaction.data.custom_id != SUBMIT_ID {
+        return Ok(());
+    }
+
+    let user_id = interaction.user.id;
+    let now = Instant::now();
+
+    let input = interaction
+        .data
+        .components
+        .iter()
+        .flat_map(|row| row.components.iter())
+        .find_map(|c| match c {
+            serenity::ActionRowComponent::InputText(t) if t.custom_id == INPUT_ID => {
+                t.value.clone()
+            }
+            _ => None,
+        });
+    let Some(input) = input else {
+        return Ok(());
+    };
+
+    let Some((_, mut challenge)) = CHALLENGES.remove(&user_id) else {
+        interaction
+            .create_response(
+                ctx,
+                ephemeral_response(|m| {
+                    m.content("チャレンジが見つかりません。もう一度「認証する」を押してください。")
+                }),
+            )
+            .await?;
+        return Ok(());
+    };
+
+    match challenge.submit(&input, now) {
+        SubmitOutcome::Correct => {
+            let Some(guild_id) = interaction.guild_id else {
+                return Ok(());
+            };
+            let member = guild_id.member(ctx, user_id).await?;
+            member
+                .add_role(ctx, data.config.verify.verify_role_id)
+                .await?;
+
+            let embed = serenity::CreateEmbed::new()
+                .color(COLOR_AQUA)
+                .title("✅ 認証成功")
+                .description("ロールを付与しました。")
+                .footer(system_footer());
+            interaction
+                .create_response(ctx, ephemeral_response(|m| m.embed(embed)))
+                .await?;
+        }
+        SubmitOutcome::Wrong { invalidated } => {
+            FAILURES.entry(user_id).or_default().record_failure(now);
+            if !invalidated {
+                // 試行回数が残っているのでチャレンジを継続する
+                CHALLENGES.insert(user_id, challenge);
+            }
+            let embed = serenity::CreateEmbed::new()
+                .color(COLOR_FAIL)
+                .title("❌ 不正解")
+                .description("もう一度やり直してください。")
+                .footer(system_footer());
+            interaction
+                .create_response(ctx, ephemeral_response(|m| m.embed(embed)))
+                .await?;
+        }
+        SubmitOutcome::Expired => {
+            FAILURES.entry(user_id).or_default().record_failure(now);
+            let embed = serenity::CreateEmbed::new()
+                .color(COLOR_FAIL)
+                .title("⌛ 時間切れ")
+                .description("もう一度やり直してください。")
+                .footer(system_footer());
+            interaction
+                .create_response(ctx, ephemeral_response(|m| m.embed(embed)))
+                .await?;
+        }
+    }
 
     Ok(())
 }

@@ -1,4 +1,5 @@
-use crate::verify::common::{COLOR_AQUA, GUIDE_IMAGE_URL, START_ID};
+use crate::verify::common::{COLOR_AQUA, GUIDE_IMAGE_URL};
+use crate::verify::handler::START_ID;
 use crate::{Context, Error};
 use poise::serenity_prelude as serenity;
 

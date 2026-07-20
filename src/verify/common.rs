@@ -8,6 +8,3 @@ pub const FOOTER_ICON_URL: &str =
 pub const COLOR_AQUA: u32 = 0x8FD3FF;
 pub const COLOR_WHITE: u32 = 0xF5FAFF;
 pub const COLOR_FAIL: u32 = 0x9DB7C7;
-
-pub const START_ID: &str = "captcha:start";
-pub const ANSWER_PREFIX: &str = "captcha:ans:";

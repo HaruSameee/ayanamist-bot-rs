@@ -96,6 +96,20 @@ async fn main() -> Result<(), Error> {
                         }
                     }
                 }
+
+                if let serenity::FullEvent::InteractionCreate { interaction } = event
+                    && let serenity::Interaction::Modal(modal) = interaction
+                {
+                    let custom_id = modal.data.custom_id.as_str();
+                    let namespace = custom_id.split(':').next().unwrap_or("");
+
+                    match namespace {
+                        "captcha" => verify::handler::handle_modal(ctx, data, modal).await?,
+                        _ => {
+                            tracing::warn!("unknown modal: {}", custom_id);
+                        }
+                    }
+                }
                 Ok(())
             })
         },
@@ -123,6 +137,8 @@ async fn main() -> Result<(), Error> {
                     config.guild.guild_id,
                 )
                 .await?;
+
+                tokio::spawn(verify::handler::cleanup_task());
 
                 Ok(Data {
                     config,
