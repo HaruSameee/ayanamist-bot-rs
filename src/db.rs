@@ -1,10 +1,14 @@
 use crate::Error;
+use sqlx::migrate::Migrator;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use sqlx::{Row, SqlitePool};
 use std::str::FromStr;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub const DEFAULT_DATABASE_PATH: &str = "data/bot.db";
+
+/// 書き込み競合時に即エラー（SQLITE_BUSY）を返さないための待機時間。
+const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// 現在時刻を unix epoch 秒で返す。
 pub fn now_unix() -> i64 {
@@ -12,6 +16,15 @@ pub fn now_unix() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+/// migrations ディレクトリのマイグレーションを適用する。
+async fn run_migrations(pool: &SqlitePool) -> Result<(), Error> {
+    Migrator::new(std::path::Path::new("./migrations"))
+        .await?
+        .run(pool)
+        .await?;
+    Ok(())
 }
 
 /// SQLite に接続し、WAL・外部キーを有効化した上でマイグレーションを適用する。
@@ -25,10 +38,11 @@ pub async fn connect(path: &str) -> Result<SqlitePool, Error> {
     let options = SqliteConnectOptions::from_str(path)?
         .create_if_missing(true)
         .journal_mode(SqliteJournalMode::Wal)
-        .foreign_keys(true);
+        .foreign_keys(true)
+        .busy_timeout(BUSY_TIMEOUT);
 
     let pool = SqlitePoolOptions::new().connect_with(options).await?;
-    sqlx::migrate!("./migrations").run(&pool).await?;
+    run_migrations(&pool).await?;
     Ok(pool)
 }
 
@@ -103,7 +117,7 @@ impl Period {
     }
 }
 
-#[derive(Debug, sqlx::FromRow)]
+#[derive(Debug)]
 pub struct RankingRow {
     pub user_id: i64,
     pub correct_count: i64,
@@ -111,7 +125,7 @@ pub struct RankingRow {
 }
 
 /// 正解数の多い順のランキングを返す。
-/// 同数の場合は平均試行回数の少ない方、さらに同値なら先に到達した方が上位。
+/// 同数の場合は正解時の平均試行回数の少ない方、さらに同値なら先に到達した方が上位。
 pub async fn dareda_ranking(
     pool: &SqlitePool,
     period: Period,
@@ -119,10 +133,10 @@ pub async fn dareda_ranking(
     limit: i64,
 ) -> Result<Vec<RankingRow>, Error> {
     let cutoff = period.cutoff(now);
-    let rows = sqlx::query_as::<_, RankingRow>(
+    let rows = sqlx::query(
         "SELECT user_id, \
                 SUM(is_correct) AS correct_count, \
-                AVG(CAST(attempts AS REAL)) AS avg_attempts, \
+                AVG(CASE WHEN is_correct = 1 THEN CAST(attempts AS REAL) END) AS avg_attempts, \
                 MAX(CASE WHEN is_correct = 1 THEN answered_at END) AS reached_at \
          FROM dareda_result \
          WHERE (?1 IS NULL OR answered_at >= ?1) \
@@ -135,10 +149,19 @@ pub async fn dareda_ranking(
     .bind(limit)
     .fetch_all(pool)
     .await?;
-    Ok(rows)
+
+    rows.iter()
+        .map(|row| {
+            Ok(RankingRow {
+                user_id: row.try_get("user_id")?,
+                correct_count: row.try_get("correct_count")?,
+                avg_attempts: row.try_get("avg_attempts")?,
+            })
+        })
+        .collect()
 }
 
-#[derive(Debug, sqlx::FromRow)]
+#[derive(Debug)]
 pub struct DaredaHistoryEntry {
     pub pokemon_id: i64,
     pub is_correct: bool,
@@ -165,7 +188,7 @@ pub async fn dareda_stats(pool: &SqlitePool, user_id: u64) -> Result<DaredaStats
     .fetch_one(pool)
     .await?;
 
-    let recent = sqlx::query_as::<_, DaredaHistoryEntry>(
+    let recent_rows = sqlx::query(
         "SELECT pokemon_id, is_correct, attempts, answered_at \
          FROM dareda_result WHERE user_id = ?1 \
          ORDER BY answered_at DESC, id DESC LIMIT 10",
@@ -173,6 +196,18 @@ pub async fn dareda_stats(pool: &SqlitePool, user_id: u64) -> Result<DaredaStats
     .bind(user_id as i64)
     .fetch_all(pool)
     .await?;
+
+    let recent = recent_rows
+        .iter()
+        .map(|row| {
+            Ok(DaredaHistoryEntry {
+                pokemon_id: row.try_get("pokemon_id")?,
+                is_correct: row.try_get("is_correct")?,
+                attempts: row.try_get("attempts")?,
+                answered_at: row.try_get("answered_at")?,
+            })
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
 
     Ok(DaredaStats {
         correct_count: row.try_get("correct_count")?,
@@ -193,7 +228,7 @@ mod tests {
             .connect("sqlite::memory:")
             .await
             .unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        run_migrations(&pool).await.unwrap();
         pool
     }
 
@@ -359,5 +394,55 @@ mod tests {
         assert_eq!(stats.recent.len(), 10);
         assert_eq!(stats.recent[0].pokemon_id, 11);
         assert_eq!(stats.recent[9].pokemon_id, 2);
+    }
+
+    #[tokio::test]
+    async fn ranking_avg_attempts_uses_correct_answers_only() {
+        let pool = test_pool().await;
+        // 正解数は2人とも1。user 1 は正解1回（1回で正解）＋別ゲームの不正解（5回）、
+        // user 2 は正解1回（2回で正解）のみ。
+        // 正解のみの平均: user 1 = 1.0 < user 2 = 2.0 なので user 1 が上位。
+        // 全レコードの平均だと user 1 = 3.0 > user 2 = 2.0 となり順位が逆転する。
+        add_result(&pool, 1, 1, true, 1, 100).await;
+        add_result(&pool, 1, 2, false, 5, 200).await;
+        add_result(&pool, 2, 1, true, 2, 300).await;
+
+        let rows = dareda_ranking(&pool, Period::All, 1000, 10).await.unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].user_id, 1);
+        assert_eq!(rows[0].avg_attempts, 1.0);
+        assert_eq!(rows[1].user_id, 2);
+    }
+
+    #[tokio::test]
+    async fn concurrent_writes_do_not_fail() {
+        // busy_timeout 設定込みの connect() を使い、複数接続からの同時書き込みが
+        // SQLITE_BUSY で失敗しないことを確認する
+        let path = std::env::temp_dir().join(format!(
+            "ayanamist-test-{}-{}.db",
+            std::process::id(),
+            now_unix()
+        ));
+        let path_str = path.to_string_lossy().into_owned();
+
+        let pool = connect(&path_str).await.unwrap();
+        let mut handles = Vec::new();
+        for i in 0..20u64 {
+            let pool = pool.clone();
+            handles.push(tokio::spawn(async move {
+                insert_dareda_result(&pool, i, 1, true, 1, 100).await
+            }));
+        }
+        for handle in handles {
+            handle.await.unwrap().unwrap();
+        }
+
+        let stats = dareda_stats(&pool, 7).await.unwrap();
+        assert_eq!(stats.total_count, 1);
+
+        pool.close().await;
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{path_str}{suffix}"));
+        }
     }
 }

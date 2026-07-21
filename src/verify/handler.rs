@@ -210,6 +210,8 @@ pub async fn handle_modal(
             let Some(guild_id) = interaction.guild_id else {
                 return Ok(());
             };
+            // member 取得とロール付与の2往復がインタラクションの3秒制限を超えうるため先に defer する
+            interaction.defer_ephemeral(ctx).await?;
             let member = guild_id.member(ctx, user_id).await?;
             member
                 .add_role(ctx, data.config.verify.verify_role_id)
@@ -221,7 +223,12 @@ pub async fn handle_modal(
                 .description("ロールを付与しました。")
                 .footer(system_footer());
             interaction
-                .create_response(ctx, ephemeral_response(|m| m.embed(embed)))
+                .create_followup(
+                    ctx,
+                    serenity::CreateInteractionResponseFollowup::new()
+                        .embed(embed)
+                        .ephemeral(true),
+                )
                 .await?;
         }
         SubmitOutcome::Wrong { invalidated } => {

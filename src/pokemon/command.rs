@@ -108,6 +108,7 @@ pub async fn play(ctx: Context<'_>) -> Result<(), Error> {
         .timeout(data.config.pokemon.time_limit)
         .stream();
     let mut retry = 0;
+    let mut tracker = AttemptTracker::default();
 
     while let Some(m) = collector.next().await {
         let answer = m.content.trim().to_katakana();
@@ -135,7 +136,7 @@ pub async fn play(ctx: Context<'_>) -> Result<(), Error> {
                 m.author.id.get(),
                 pokemon.id,
                 true,
-                retry as u32 + 1,
+                tracker.attempts_for(m.author.id) + 1,
                 db::now_unix(),
             )
             .await
@@ -164,22 +165,13 @@ pub async fn play(ctx: Context<'_>) -> Result<(), Error> {
                 )
                 .await?;
 
-            if let Err(err) = db::insert_dareda_result(
-                &data.db,
-                ctx.author().id.get(),
-                pokemon.id,
-                false,
-                retry as u32,
-                db::now_unix(),
-            )
-            .await
-            {
-                tracing::error!("failed to record dareda result: {err}");
-            }
+            // ギブアップした実行者は未回答でも 0 回試行として記録する
+            record_failure_results(data, &tracker, pokemon.id, Some(ctx.author().id)).await;
 
             return Ok(());
         }
 
+        tracker.record_wrong(m.author.id);
         m.reply(ctx, "はずれ！").await?;
 
         retry += 1;
@@ -202,18 +194,7 @@ pub async fn play(ctx: Context<'_>) -> Result<(), Error> {
                 )
                 .await?;
 
-            if let Err(err) = db::insert_dareda_result(
-                &data.db,
-                ctx.author().id.get(),
-                pokemon.id,
-                false,
-                retry as u32,
-                db::now_unix(),
-            )
-            .await
-            {
-                tracing::error!("failed to record dareda result: {err}");
-            }
+            record_failure_results(data, &tracker, pokemon.id, None).await;
 
             return Ok(());
         }
@@ -236,20 +217,73 @@ pub async fn play(ctx: Context<'_>) -> Result<(), Error> {
         )
         .await?;
 
-    if let Err(err) = db::insert_dareda_result(
-        &data.db,
-        ctx.author().id.get(),
-        pokemon.id,
-        false,
-        retry as u32,
-        db::now_unix(),
-    )
-    .await
+    record_failure_results(data, &tracker, pokemon.id, None).await;
+
+    Ok(())
+}
+
+/// ユーザーごとの誤答回数を記録する。
+/// ゲーム終了判定の共有カウンタ（retry）とは別に、戦績記録にはこの個人別カウントを使う。
+#[derive(Default)]
+struct AttemptTracker {
+    attempts: std::collections::HashMap<serenity::UserId, u32>,
+}
+
+impl AttemptTracker {
+    fn record_wrong(&mut self, user_id: serenity::UserId) {
+        *self.attempts.entry(user_id).or_default() += 1;
+    }
+
+    fn attempts_for(&self, user_id: serenity::UserId) -> u32 {
+        self.attempts.get(&user_id).copied().unwrap_or(0)
+    }
+
+    fn contains(&self, user_id: serenity::UserId) -> bool {
+        self.attempts.contains_key(&user_id)
+    }
+
+    fn entries(&self) -> impl Iterator<Item = (serenity::UserId, u32)> + '_ {
+        self.attempts.iter().map(|(&id, &n)| (id, n))
+    }
+}
+
+/// ゲームが正解で終わらなかった場合に、回答に参加した全ユーザーの失敗レコードを記録する。
+/// `include_user` を指定すると、そのユーザーが未回答でも 0 回試行として記録する。
+async fn record_failure_results(
+    data: &crate::Data,
+    tracker: &AttemptTracker,
+    pokemon_id: i16,
+    include_user: Option<serenity::UserId>,
+) {
+    for (user_id, attempts) in tracker.entries() {
+        if let Err(err) = db::insert_dareda_result(
+            &data.db,
+            user_id.get(),
+            pokemon_id,
+            false,
+            attempts,
+            db::now_unix(),
+        )
+        .await
+        {
+            tracing::error!("failed to record dareda result: {err}");
+        }
+    }
+
+    if let Some(user_id) = include_user
+        && !tracker.contains(user_id)
+        && let Err(err) = db::insert_dareda_result(
+            &data.db,
+            user_id.get(),
+            pokemon_id,
+            false,
+            0,
+            db::now_unix(),
+        )
+        .await
     {
         tracing::error!("failed to record dareda result: {err}");
     }
-
-    Ok(())
 }
 
 /// ランキングの集計期間。
@@ -393,7 +427,8 @@ fn should_end(retry: usize, max_retry: usize) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::should_end;
+    use super::{AttemptTracker, should_end};
+    use poise::serenity_prelude::UserId;
 
     #[test]
     fn should_end_at_max_retry() {
@@ -403,5 +438,26 @@ mod tests {
     #[test]
     fn should_not_end_before_max_retry() {
         assert!(!should_end(4, 5));
+    }
+
+    #[test]
+    fn attempt_tracker_counts_per_user_independently() {
+        let user_a = UserId::new(1);
+        let user_b = UserId::new(2);
+        let mut tracker = AttemptTracker::default();
+
+        tracker.record_wrong(user_a);
+        tracker.record_wrong(user_a);
+        tracker.record_wrong(user_b);
+
+        assert_eq!(tracker.attempts_for(user_a), 2);
+        assert_eq!(tracker.attempts_for(user_b), 1);
+    }
+
+    #[test]
+    fn attempt_tracker_returns_zero_for_unknown_user() {
+        let tracker = AttemptTracker::default();
+        assert_eq!(tracker.attempts_for(UserId::new(999)), 0);
+        assert!(!tracker.contains(UserId::new(999)));
     }
 }

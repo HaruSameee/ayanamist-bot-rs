@@ -9,6 +9,7 @@ use tokio::sync::{Mutex, OnceCell, RwLock};
 
 const DEFAULT_BASE_URL: &str = "https://pokeapi.co/api/v2";
 const IMAGE_CACHE_CAPACITY: usize = 50;
+const SPECIES_CACHE_CAPACITY: usize = 50;
 
 #[derive(Debug, Deserialize)]
 struct PokemonJson {
@@ -50,7 +51,8 @@ struct ResourceList {
 
 struct Inner {
     pokemon_cache: RwLock<HashMap<i16, Arc<PokemonJson>>>,
-    species_cache: RwLock<HashMap<i16, Arc<SpeciesJson>>>,
+    // SpeciesJson は flavor_text_entries が大きいため上限付き LRU にする
+    species_cache: Mutex<LruCache<i16, Arc<SpeciesJson>>>,
     image_bytes_cache: Mutex<LruCache<i16, Arc<Vec<u8>>>>,
     total: OnceCell<i16>,
 }
@@ -68,7 +70,9 @@ impl PokemonApi {
             base_url: base_url.into(),
             inner: Arc::new(Inner {
                 pokemon_cache: RwLock::new(HashMap::new()),
-                species_cache: RwLock::new(HashMap::new()),
+                species_cache: Mutex::new(LruCache::new(
+                    NonZeroUsize::new(SPECIES_CACHE_CAPACITY).unwrap_or(NonZeroUsize::MIN),
+                )),
                 image_bytes_cache: Mutex::new(LruCache::new(
                     NonZeroUsize::new(IMAGE_CACHE_CAPACITY).unwrap_or(NonZeroUsize::MIN),
                 )),
@@ -103,8 +107,11 @@ impl PokemonApi {
     }
 
     async fn species(&self, id: i16) -> Result<Arc<SpeciesJson>, Error> {
-        if let Some(cached) = self.inner.species_cache.read().await.get(&id) {
-            return Ok(Arc::clone(cached));
+        {
+            let mut cache = self.inner.species_cache.lock().await;
+            if let Some(cached) = cache.get(&id) {
+                return Ok(Arc::clone(cached));
+            }
         }
 
         let url = format!("{}/pokemon-species/{id}", self.base_url);
@@ -120,9 +127,9 @@ impl PokemonApi {
 
         self.inner
             .species_cache
-            .write()
+            .lock()
             .await
-            .insert(id, Arc::clone(&fetched));
+            .put(id, Arc::clone(&fetched));
 
         Ok(fetched)
     }
@@ -251,7 +258,7 @@ mod tests {
     use super::*;
     use rand::SeedableRng;
     use rand::rngs::StdRng;
-    use wiremock::matchers::{method, path, query_param};
+    use wiremock::matchers::{method, path, path_regex, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn species_body() -> serde_json::Value {
@@ -400,6 +407,24 @@ mod tests {
             .filter(|r| r.url.path() == "/sprites/1.png")
             .count();
         assert_eq!(sprite_requests, 1);
+    }
+
+    #[tokio::test]
+    async fn species_cache_is_bounded() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex(r"^/pokemon-species/\d+$"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(species_body()))
+            .mount(&server)
+            .await;
+
+        let api = PokemonApi::new(server.uri());
+        for id in 1..=(SPECIES_CACHE_CAPACITY as i16 + 1) {
+            api.species(id).await.unwrap();
+        }
+
+        let cache = api.inner.species_cache.lock().await;
+        assert_eq!(cache.len(), SPECIES_CACHE_CAPACITY);
     }
 
     #[test]

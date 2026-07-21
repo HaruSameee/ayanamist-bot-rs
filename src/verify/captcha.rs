@@ -1,6 +1,6 @@
 use crate::Error;
 use ab_glyph::{FontArc, PxScale};
-use image::{DynamicImage, Rgb, RgbImage};
+use image::{DynamicImage, Rgba, RgbaImage};
 use imageproc::drawing::{draw_line_segment_mut, draw_text_mut};
 use imageproc::geometric_transformations::{Interpolation, rotate_about_center};
 use rand::Rng;
@@ -40,7 +40,7 @@ pub fn render_captcha<R: Rng>(rng: &mut R, answer: &str) -> Result<DynamicImage,
     let font = font()?;
     let chars: Vec<char> = answer.chars().collect();
     let width = CELL_WIDTH * chars.len() as u32 + 32;
-    let mut canvas = RgbImage::from_pixel(width, IMAGE_HEIGHT, Rgb([255, 255, 255]));
+    let mut canvas = RgbaImage::from_pixel(width, IMAGE_HEIGHT, Rgba([255, 255, 255, 255]));
 
     // 文字ごとに回転・サイズ・ベースラインを変えて合成
     let mut x = 16i64;
@@ -50,34 +50,28 @@ pub fn render_captcha<R: Rng>(rng: &mut R, answer: &str) -> Result<DynamicImage,
             .gen_range(-MAX_ROTATION_DEG..=MAX_ROTATION_DEG)
             .to_radians();
         let baseline_jitter = rng.gen_range(-8i32..=8i32);
-        let color = Rgb([
+        let color = Rgba([
             rng.gen_range(0..100u8),
             rng.gen_range(0..100u8),
             rng.gen_range(0..100u8),
+            255,
         ]);
 
-        let mut glyph_img = RgbImage::from_pixel(64, 64, Rgb([255, 255, 255]));
-        draw_text_mut(
-            &mut glyph_img,
-            color,
-            8,
-            8,
-            PxScale::from(scale),
-            font,
-            &c.to_string(),
-        );
-        let rotated = rotate_about_center(&glyph_img, angle, Interpolation::Bilinear, color_bg());
-        image::imageops::overlay(&mut canvas, &rotated, x, (16 + baseline_jitter) as i64);
+        // タイルは透明背景の RGBA。RGB だと overlay がアルファ合成せず上書きになり、
+        // 送り幅（CELL_WIDTH）をはみ出した前の文字のピクセルが消えてしまう
+        let tile = render_glyph_tile(font, c, scale, angle, color);
+        image::imageops::overlay(&mut canvas, &tile, x, (16 + baseline_jitter) as i64);
         x += CELL_WIDTH as i64;
     }
 
     // 文字を横切る直線を2〜4本
     let line_count = rng.gen_range(2..=4);
     for _ in 0..line_count {
-        let color = Rgb([
+        let color = Rgba([
             rng.gen_range(0..200u8),
             rng.gen_range(0..200u8),
             rng.gen_range(0..200u8),
+            255,
         ]);
         draw_line_segment_mut(
             &mut canvas,
@@ -101,10 +95,11 @@ pub fn render_captcha<R: Rng>(rng: &mut R, answer: &str) -> Result<DynamicImage,
         canvas.put_pixel(
             px,
             py,
-            Rgb([
+            Rgba([
                 rng.gen_range(0..=255u8),
                 rng.gen_range(0..=255u8),
                 rng.gen_range(0..=255u8),
+                255,
             ]),
         );
     }
@@ -112,7 +107,7 @@ pub fn render_captcha<R: Rng>(rng: &mut R, answer: &str) -> Result<DynamicImage,
     // 画像全体に正弦波の歪み
     let amplitude = rng.gen_range(4.0f32..8.0f32);
     let wavelength = rng.gen_range(40.0f32..80.0f32);
-    let mut warped = RgbImage::from_pixel(width, IMAGE_HEIGHT, Rgb([255, 255, 255]));
+    let mut warped = RgbaImage::from_pixel(width, IMAGE_HEIGHT, Rgba([255, 255, 255, 255]));
     for y in 0..IMAGE_HEIGHT {
         for x in 0..width {
             let src_y = (y as f32
@@ -125,11 +120,28 @@ pub fn render_captcha<R: Rng>(rng: &mut R, answer: &str) -> Result<DynamicImage,
         }
     }
 
-    Ok(DynamicImage::ImageRgb8(warped))
+    Ok(DynamicImage::ImageRgba8(warped))
 }
 
-fn color_bg() -> Rgb<u8> {
-    Rgb([255, 255, 255])
+/// 1文字分のタイルを透明背景で描画して回転させる。
+fn render_glyph_tile(
+    font: &FontArc,
+    c: char,
+    scale: f32,
+    angle: f32,
+    color: Rgba<u8>,
+) -> RgbaImage {
+    let mut tile = RgbaImage::from_pixel(64, 64, Rgba([0, 0, 0, 0]));
+    draw_text_mut(
+        &mut tile,
+        color,
+        8,
+        8,
+        PxScale::from(scale),
+        font,
+        &c.to_string(),
+    );
+    rotate_about_center(&tile, angle, Interpolation::Bilinear, Rgba([0, 0, 0, 0]))
 }
 
 #[cfg(test)]
@@ -182,5 +194,12 @@ mod tests {
             assert_eq!(img.height(), IMAGE_HEIGHT);
             assert_eq!(img.width(), CELL_WIDTH * answer.chars().count() as u32 + 32);
         }
+    }
+
+    #[test]
+    fn glyph_tile_has_transparent_background() {
+        // overlay でのアルファ合成が機能するには、タイルの背景が透明（alpha=0）でなければならない
+        let tile = render_glyph_tile(font().unwrap(), 'A', 36.0, 0.0, Rgba([0, 0, 0, 255]));
+        assert_eq!(tile.get_pixel(0, 0)[3], 0);
     }
 }
